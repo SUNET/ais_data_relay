@@ -4,8 +4,6 @@
 
 ```bash
 hostname: relay-dco-ais-processor-1.streams.sunet.se
-ipv4: 89.47.191.200, 
-ipv6: 2001:6b0:7d:40::2a8
 ```
 
 ## Dependencies
