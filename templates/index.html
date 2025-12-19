@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AIS Relay Usage Guide</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2rem; }
+        h1, h2 { color: #2c3e50; }
+        pre { background: #f4f4f4; padding: 1rem; border-radius: 5px; overflow-x: auto; }
+        code { font-family: monospace; }
+        .section { margin-bottom: 2rem; }
+    </style>
+</head>
+<body>
+    <h1>AIS Relay Server Usage Guide</h1>
+
+    <div class="section">
+        <h2>1. TCP Relay (Port 5000)</h2>
+        <p>The TCP relay provides raw AIS NMEA data. Only one connection to the AIS source is made; multiple clients can connect to this relay.</p>
+
+        <h3>Python TCP Client Example:</h3>
+        <pre><code>import asyncio
+
+async def tcp_client(USERNAME="admin", PASSWORD="1234"):
+    reader, writer = await asyncio.open_connection("localhost", 5000)
+    prompt = await reader.readline()
+    print(prompt.decode().strip())
+    writer.write((USERNAME + "\\n").encode())
+    await writer.drain()
+    prompt = await reader.readline()
+    print(prompt.decode().strip())
+    writer.write((PASSWORD + "\\n").encode())
+    await writer.drain()
+    result = await reader.readline()
+    print(result.decode().strip())
+    try:
+        while True:
+            line = await reader.readline()
+            if not line:
+                break
+            print(line.decode().strip())
+    except KeyboardInterrupt:
+        writer.close()
+        await writer.wait_closed()</code></pre>
+
+        <h3>curl Example (HTTP GET for DB snapshot):</h3>
+        <pre><code>curl -u admin:1234 http://localhost:8000/db/snapshot -o ais_snapshot.db</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>2. WebSocket Relay (Port 8000)</h2>
+        <p>The WebSocket endpoint <code>/ws/ais</code> provides normalized JSON AIS messages. Optional geographic filters can be sent on connection.</p>
+
+        <h3>Python WebSocket Client Example:</h3>
+        <pre><code>import asyncio
+import websockets
+import json
+import base64
+
+async def ws_client(USERNAME="admin", PASSWORD="1234"):
+    auth = base64.b64encode(f"{USERNAME}:{PASSWORD}".encode()).decode()
+    headers = [("Authorization", f"Basic {auth}")]
+    async with websockets.connect("ws://localhost:8000/ws/ais", extra_headers=headers) as ws:
+        await ws.send(json.dumps({
+            "type": "filter",
+            "bbox": {"min_lat": 56,"max_lat": 58,"min_lon": 18,"max_lon": 21}
+        }))
+        async for msg in ws:
+            print(json.loads(msg))</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>3. Database Snapshot</h2>
+        <p>The SQLite database is available for download using the snapshot endpoint. Always authenticate before downloading.</p>
+
+        <h3>Python requests Example:</h3>
+        <pre><code>import requests
+from requests.auth import HTTPBasicAuth
+
+url = "http://localhost:8000/db/snapshot"
+response = requests.get(url, auth=HTTPBasicAuth("admin", "1234"))
+with open("ais_snapshot.db", "wb") as f:
+    f.write(response.content)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>4. Quick curl Example</h2>
+        <pre><code>curl -u admin:1234 http://localhost:8000/db/snapshot -o ais_snapshot.db</code></pre>
+    </div>
+
+    <p>For WebSocket clients, remember to use Basic Auth in the headers. For TCP clients, follow the username/password prompts.</p>
+</body>
+</html>
