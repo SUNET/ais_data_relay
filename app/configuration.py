@@ -11,16 +11,26 @@ class StreamOnlyFilter(logging.Filter):
     def filter(self, record):
         return record.levelno == logging.INFO
 
+
+# Resolve log file path from environment (with default)
+log_file = os.environ.get("LOGGER_FILE", "ais_processor.log")
+
+# Ensure parent directories exist (if any)
+log_path = Path(log_file)
+if log_path.parent != Path("."):
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    
 # Create handlers
 stream_handler = logging.StreamHandler()
 stream_handler.addFilter(StreamOnlyFilter())
 
+file_handler = logging.FileHandler(log_path)
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[stream_handler, logging.FileHandler("ais_processor.log")],
+    handlers=[stream_handler, file_handler],
 )
 logger = logging.getLogger("ais_processor")
 
