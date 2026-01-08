@@ -4,11 +4,11 @@ Run with docker
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
-```bash
+```
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file .env.test up -d
-```bash
+```
 
 
 ## Server Information
