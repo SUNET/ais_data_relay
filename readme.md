@@ -1,5 +1,14 @@
 # AIS Relay Processor Documentation
 
+```bash
+ssh ubuntu@shared-dco-prod-aisdatarelay-1.streams.sunet.se
+machine_name=shared-dco-prod-aisdatarelay-1.streams.sunet.se
+cd net-ops
+./prepare-iaas-ubuntu "$machine_name"
+./addhost -b "$machine_name"
+sudo hostnamectl set-hostname shared-dco-prod-aisdatarelay-1 --static
+```
+
 Run with docker
 
 ```bash
@@ -10,11 +19,10 @@ docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file .env.test up -d
 ```
 
-
 ## Server Information
 
 ```bash
-Hostname: relay-dco-ais-processor-1.streams.sunet.se
+Hostname: shared-dco-prod-aisdatarelay-1.streams.sunet.se
 ```
 
 ## Dependencies

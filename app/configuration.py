@@ -43,6 +43,11 @@ def _parse_tuple(env_value: str, default: Tuple[float, float]) -> Tuple[float, f
     except ValueError:
         raise ValueError(f"Invalid tuple format: {env_value}, expected 'min,max'")
 
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 @dataclass
 class AppConfig:
@@ -78,6 +83,8 @@ class AppConfig:
 
     tcp_username: str = field(default_factory=lambda: os.environ.get("TCP_USERNAME", "admin"))
     tcp_password: str = field(default_factory=lambda: os.environ.get("TCP_PASSWORD", "1234"))
+    enable_tcp_auth: bool = field(default_factory=lambda: env_bool("ENABLE_TCP_AUTH", default=False))
+    enable_web_auth: bool = field(default_factory=lambda: env_bool("ENABLE_WEB_AUTH", default=True))
 
 
     # Class-level list of sensitive fields

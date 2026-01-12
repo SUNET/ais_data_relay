@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from configuration import AppConfig, logger
 from typing import Set, Dict, Optional, Tuple
 from database_unrestricted import DatabaseManager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, status, Depends
+from fastapi import FastAPI, HTTPException, Request, status, Depends
 
 @dataclass
 class GeographicBounds:
@@ -40,6 +40,8 @@ class AuthConfig:
     web_password: str
     tcp_username: str
     tcp_password: str
+    enable_tcp_auth: bool = False
+    enable_web_auth: bool = True
     
     def verify_web_credentials(self, username: str, password: str) -> bool:
         """Verify web interface credentials using constant-time comparison"""
@@ -53,9 +55,25 @@ class AuthConfig:
         password_match = secrets.compare_digest(password, self.tcp_password)
         return username_match and password_match
 
+async def read_line_limited(reader, max_bytes, timeout):
+    buf = bytearray()
+    while True:
+        chunk = await asyncio.wait_for(reader.read(1), timeout)
+        if not chunk:
+            raise ConnectionError("Client disconnected")
+
+        buf += chunk
+
+        if len(buf) > max_bytes:
+            raise ValueError("Line too long")
+
+        if chunk == b'\n':
+            return bytes(buf)
+
 
 class AISRelayServer:
     def __init__(self, config: AppConfig, use_hashed=False, auth_config: Optional[AuthConfig] = None):
+        self.MAX_LINE = 256
         self.config = config
         self.ais_host = config.ais_host
         self.ais_port = config.ais_port
@@ -65,7 +83,6 @@ class AISRelayServer:
         self.auth_config = auth_config
 
         # Clients
-        self.ws_clients: Dict[WebSocket, Optional[GeographicBounds]] = {}
         self.tcp_clients: Set[asyncio.StreamWriter] = set()
 
         # AIS connection
@@ -334,7 +351,7 @@ class AISRelayServer:
             if raw_message:
                 await self.broadcast_tcp(raw_message)
 
-            # ---- Decode / normalize for WS ----
+            # ---- Decode / normalize for DB ----
             messages = line.split(b"\r\n")
             data_array = self.filter_valid_ais_lines(messages)
 
@@ -345,9 +362,6 @@ class AISRelayServer:
                         decoded_ais_line = decoded_sentence.asdict()
                         decoded_normalized = self.normalize_ais_message(decoded_ais_line)
                         print("decoded_normalized={}".format(decoded_normalized))
-
-                        if decoded_normalized:
-                            await self.broadcast_ws(decoded_normalized)
                             
                         # enqueue for DB (DO NOT await DB here)
                         try:
@@ -381,48 +395,28 @@ class AISRelayServer:
             writer.close()
             logger.info("Removed dead TCP client")
 
-    async def broadcast_ws(self, message: dict):
-        dead = []
 
-        for ws, bounds in self.ws_clients.items():
-            try:
-                # Optional: geographic filtering
-                if bounds:
-                    loc = message.get("location")
-                    if not loc:
-                        continue
-
-                    lon, lat = loc["coordinates"]
-                    if not bounds.contains(lat, lon):
-                        continue
-
-                await ws.send_json(message)
-
-            except Exception:
-                dead.append(ws)
-
-        for ws in dead:
-            self.ws_clients.pop(ws, None)
-            
     async def is_authenticated_tcp_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> bool:
         addr = writer.get_extra_info("peername")
-        if not ais_relay.auth_config:
+        if not self.auth_config.enable_tcp_auth:
             return True  # No authentication required
         
         # Require authentication if configured
-        if self.auth_config:
+        if self.auth_config.enable_tcp_auth:
             writer.write(b"AUTH REQUIRED\r\nUsername: ")
             await writer.drain()
             
             # Read username (with timeout)
             try:
-                username_data = await asyncio.wait_for(reader.readline(), timeout=30.0)
+                # username_data = await asyncio.wait_for(reader.readline(), timeout=30.0)
+                username_data = await read_line_limited(reader, 64, 30.0)
                 username = username_data.decode('utf-8', errors='ignore').strip()
                 
                 writer.write(b"Password: ")
                 await writer.drain()
                 
-                password_data = await asyncio.wait_for(reader.readline(), timeout=30.0)
+                # password_data = await asyncio.wait_for(reader.readline(), timeout=30.0)
+                password_data = await read_line_limited(reader, 256, 30.0)
                 password = password_data.decode('utf-8', errors='ignore').strip()
                 
                 # Verify credentials
@@ -539,31 +533,9 @@ INDEX_FILE = BASE_DIR / "templates" / "index.html"
 app.mount("/data", StaticFiles(directory=static_dir, html=True), name="data")
 
 
-async def is_authenticated_websocket(ws: WebSocket) -> bool:
-    """Check if WebSocket is authenticated using query parameters"""
-    if ais_relay.auth_config is None:
-        return True  # No authentication required
-    # Extract basic auth from headers
-    auth_header = ws.headers.get("authorization")
-    if not auth_header or not auth_header.startswith("Basic "):
-        await ws.close(code=1008)
-        return False
-    try:
-        decoded = base64.b64decode(auth_header[6:]).decode()
-        username, password = decoded.split(":", 1)
-        if ais_relay.auth_config.verify_web_credentials(username, password):
-            return True
-        else:
-            await ws.close(code=1008)
-            return False
-    except Exception:
-        await ws.close(code=1008)
-        return False
-
-
 async def require_web_auth(request: Request):
     """Authenticate HTTP requests using the same web credentials as WebSocket."""
-    if ais_relay.auth_config is None:
+    if not ais_relay.auth_config.enable_web_auth:
         return  # No auth required
 
     auth_header = request.headers.get("authorization")
@@ -591,33 +563,10 @@ async def require_web_auth(request: Request):
         )
 
 
-
-
 @app.get("/", response_class=FileResponse)
 async def index():
     return FileResponse(INDEX_FILE)
 
-@app.websocket("/ws/ais")
-async def ws_ais(ws: WebSocket):
-    if not await is_authenticated_websocket(ws):
-        return
-    
-    await ws.accept()
-    # Add client with no filter initially
-    ais_relay.ws_clients[ws] = None
-
-    try:
-        while True:
-            msg = await ws.receive_text()
-            data = json.loads(msg)
-
-            if data.get("type") == "filter":
-                ais_relay.ws_clients[ws] = GeographicBounds(**data["bbox"])
-
-    except WebSocketDisconnect:
-        pass
-    finally:
-        ais_relay.ws_clients.pop(ws, None)
 
 @app.get("/db/snapshot")
 async def snapshot_db(_: None = Depends(require_web_auth)):
@@ -639,7 +588,6 @@ async def snapshot_db(_: None = Depends(require_web_auth)):
 async def health():
     return {
         "tcp_clients": len(ais_relay.tcp_clients),
-        "ws_clients": len(ais_relay.ws_clients),
         "ais_connected": ais_relay.ais_reader is not None,
     }
     
@@ -651,8 +599,11 @@ auth_config = AuthConfig(
     web_username=config.web_username,
     web_password=config.web_password,
     tcp_username=config.tcp_username,
-    tcp_password=config.tcp_password
+    tcp_password=config.tcp_password,
+    enable_tcp_auth=config.enable_tcp_auth,
+    enable_web_auth=config.enable_web_auth,
 )
+
 ais_relay = AISRelayServer(config, use_hashed=False, auth_config=auth_config)
 
 
