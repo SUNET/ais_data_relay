@@ -144,3 +144,5 @@ app/main copy.py
 zzzz_acmed_d.conf
 certs_temp/
 
+jenkins
+jenkins/
