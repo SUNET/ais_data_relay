@@ -6,9 +6,6 @@ git:
 builders:
 - docker
 
-triggers:
-  github_push: true
-
 extra_jobs:
 - name: ais_relay_app
   docker_name: ais_relay_app
