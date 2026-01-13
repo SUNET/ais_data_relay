@@ -1,0 +1,50 @@
+version: "3.9"
+
+services:
+  ais_relay_app:
+    image: ghcr.io/sunet/ais_relay_app:a68558a
+    container_name: ais-relay-app
+    restart: unless-stopped
+    environment:
+      AIS_USER: ${AIS_USER}
+      AIS_USER_PASSWORD: ${AIS_USER_PASSWORD}
+      AIS_SERVER_HOST: ${AIS_SERVER_HOST}
+      AIS_SERVER_PORT: ${AIS_SERVER_PORT}
+      DATABASE_URL: ${DATABASE_URL}
+      LOGGER_FILE: ${LOGGER_FILE}
+      WEB_USERNAME: ${WEB_USERNAME}
+      WEB_PASSWORD: ${WEB_PASSWORD}
+      TCP_USERNAME: ${TCP_USERNAME}
+      TCP_PASSWORD: ${TCP_PASSWORD}
+      ENABLE_TCP_AUTH: ${ENABLE_TCP_AUTH}
+      ENABLE_WEB_AUTH: ${ENABLE_WEB_AUTH}
+      LIM_LAT: ${LIM_LAT}
+      LIM_LON: ${LIM_LON}
+    networks:
+      - ais-net
+
+  stunnel:
+    image: ghcr.io/sunet/ais_relay_stunnel:a68558a
+    container_name: stunnel
+    ports:
+      - "5000:5000"   # exposed externally with TLS
+    volumes:
+      - ./stunnel/certs:/etc/stunnel/certs:ro
+      - ./stunnel/stunnel-server.conf:/etc/stunnel/stunnel.conf:ro
+    depends_on:
+      - ais_relay_app
+    networks:
+      - ais-net
+
+  nginx:
+    image: nginx:latest
+    container_name: ais-relay-nginx
+    restart: unless-stopped
+    depends_on:
+      - ais_relay_app
+    networks:
+      - ais-net
+      
+networks:
+  ais-net:
+    driver: bridge
