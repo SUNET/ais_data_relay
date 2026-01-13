@@ -4,12 +4,11 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install dependencies
-COPY requirements.txt .
+COPY app/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy app
-COPY . .
-
+COPY app .
 # Expose FastAPI port (internal, will be proxied by Nginx)
 EXPOSE 8000
 

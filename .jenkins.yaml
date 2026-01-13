@@ -4,25 +4,16 @@ git:
   branch: main
 
 builders:
-- script
-
-script:
-- "echo \"no op job\""
+- docker
+name: ais_relay_app
+docker_name: ais_relay_app
+docker_context_dir: .
+build_in_docker:
+  dockerfile: Dockerfile
 
 extra_jobs:
-- name: ais_relay_app
-  builders:
-  - docker
-  docker_name: ais_relay_app
-  docker_context_dir: app
-  build_in_docker:
-    dockerfile: Dockerfile
-
 - name: ais_relay_stunnel
-  builders:
-  - docker
   docker_name: ais_relay_stunnel
   docker_context_dir: stunnel
   build_in_docker:
     dockerfile: Dockerfile
-  docker_skip_tag_as_latest: true
