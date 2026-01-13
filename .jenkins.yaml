@@ -1,20 +1,23 @@
+clean_workspace: true
+
 git:
   branch: main
+
+builders:
+- docker
 
 triggers:
   github_push: true
 
-builders: []
-
 extra_jobs:
 - name: ais_relay_app
-  builders:
-  - docker
   docker_name: ais_relay_app
   docker_context_dir: app
+  build_in_docker:
+    dockerfile: Dockerfile
 
 - name: ais_relay_stunnel
-  builders:
-  - docker
   docker_name: ais_relay_stunnel
   docker_context_dir: stunnel
+  build_in_docker:
+    dockerfile: Dockerfile
