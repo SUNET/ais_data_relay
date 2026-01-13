@@ -1,0 +1,17 @@
+git:
+  branch: main
+triggers:
+  github_push: true
+builders:
+- docker
+extra_jobs:
+- name: ais_relay_app
+  builders:
+  - docker
+  docker_name: ais_relay_app
+  docker_context_dir: app
+- name: ais_relay_stunnel
+  builders:
+  - docker
+  docker_name: ais_relay_stunnel
+  docker_context_dir: stunnel
