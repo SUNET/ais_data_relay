@@ -4,7 +4,6 @@ set -euo pipefail
 # =========================
 # Configuration
 # =========================
-STUNNEL_BIN="/usr/bin/stunnel"
 STUNNEL_DIR="/opt/stunnel"
 STUNNEL_CONF_FILE="${STUNNEL_DIR}/client-stunnel.conf"
 
@@ -17,10 +16,20 @@ SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
 echo "=== Setting up stunnel client configuration ==="
 
 # Validate stunnel binary
-if [[ ! -x "$STUNNEL_BIN" ]]; then
-  echo "ERROR: stunnel binary not found at $STUNNEL_BIN"
+if [[ -x /usr/bin/stunnel ]]; then
+  STUNNEL_BIN="/usr/bin/stunnel"
+elif [[ -x /usr/sbin/stunnel ]]; then
+  STUNNEL_BIN="/usr/sbin/stunnel"
+else
+  echo "ERROR: stunnel binary not found."
+  echo "Searched in:"
+  echo "  - /usr/bin/stunnel"
+  echo "  - /usr/sbin/stunnel"
+  echo "Please install stunnel and try again."
   exit 1
 fi
+
+echo "Using stunnel binary: $STUNNEL_BIN"
 
 # Create stunnel directory
 if [[ ! -d "$STUNNEL_DIR" ]]; then

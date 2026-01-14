@@ -12,25 +12,72 @@ python3 -m venv ais_converter
 source ais_converter/bin/activate
 
 cd ais_converter
-git clone https://github.com/<your-org>/ais_convert_minimal.git
+git clone https://github.com/SUNET/ais_data_relay.git
 ```
 
 Install Python dependencies:
 
+For python >= 3.7
+
 ```bash
-/opt/ais_converter/bin/python3 -m pip install -r ais_convert_minimal/requirements.txt
+/opt/ais_converter/bin/python3 -m pip install -r ais_data_relay/connector/requirements_py3.7.above.txt
+```
+
+else:
+
+```bash
+/opt/ais_converter/bin/python3 -m pip install -r ais_data_relay/connector/requirements.txt
 ```
 
 ## 2. Secure AIS Relay Connection (Stunnel)
 
-The AIS relay requires a TLS-encrypted connection. This is handled using **stunnel**.
+The AIS relay requires a **TLS-encrypted connection**. This is implemented using **stunnel**, which acts as a local TCP proxy.
+Stunnel wraps the AIS TCP connection in TLS and exposes a **secure local endpoint (localhost)** for the AIS relay to connect to.
 
-### 2.1 Create Stunnel Directory
+To simplify setup, a helper script is provided that installs and configures stunnel as a **system service**.
+
+### Option A: Automated Setup (Recommended on servers)
+
+Use `setup_stunnel_ais_client.sh` to automatically install and configure the stunnel client.
+
+#### 1. Install stunnel
+
+**Debian / Ubuntu**
 
 ```bash
-mkdir -p /opt/stunnel
+sudo apt update
+sudo apt install -y stunnel4
+```
+
+**openSUSE**
+
+```bash
+sudo zypper install -y stunnel
+```
+
+#### 2. Run the stunnel client setup script
+
+```bash
+chmod +x ais_data_relay/connector/setup_stunnel_ais_client.sh
+./ais_data_relay/connector/setup_stunnel_ais_client.sh
+```
+
+Make sure to add certificates.
+
+### Option B: Manual Setup (Advanced / Personal Machines)
+
+If you prefer a manual configuration or are running on a personal workstation, follow the steps below.
+
+### 2.1 Create the Stunnel Directory
+
+Create a dedicated directory for stunnel configuration and assets:
+
+```bash
+sudo mkdir -p /opt/stunnel
 cd /opt/stunnel
 ```
+
+> **Note:** `/opt/stunnel` is used to keep the setup isolated and portable. You may choose another location if required by your environment.
 
 ### 2.2 Create Stunnel Configuration
 
