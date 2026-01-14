@@ -205,8 +205,6 @@ openssl req -x509 -new -nodes \
 * `ca.key` – CA private key (keep secure)
 * `ca.crt` – CA public certificate (distributed to clients/servers)
 
----
-
 ## Step 2: Generate Server Certificate
 
 The server certificate identifies the AIS relay endpoint.
@@ -239,8 +237,6 @@ openssl x509 -req \
 
 > ✅ The `CN` should match the server hostname used by clients.
 
----
-
 ## Step 3: Generate Client Certificate
 
 Client certificates are used by consumers (e.g. stunnel clients) to authenticate to the server.
@@ -271,22 +267,18 @@ openssl x509 -req \
 * `client.key` – client private key
 * `client.crt` – client certificate (signed by CA)
 
----
-
 ## Certificate Summary
 
 After completing the steps above, you should have:
 
 | File         | Description            |
-| ------------ | ---------------------- |
+|  | - |
 | `ca.crt`     | Trusted CA certificate |
 | `ca.key`     | CA private key         |
 | `server.crt` | Server certificate     |
 | `server.key` | Server private key     |
 | `client.crt` | Client certificate     |
 | `client.key` | Client private key     |
-
----
 
 ## Step 4: Generate Multiple Client Certificates (Optional)
 
