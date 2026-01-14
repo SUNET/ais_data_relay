@@ -2,37 +2,106 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>AIS Relay Usage Guide</title>
+    <title>AIS Relay Server Usage Guide</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 2rem; }
-        h1, h2 { color: #2c3e50; }
+        body { font-family: Arial, sans-serif; margin: 2rem; line-height: 1.6; }
+        h1, h2, h3 { color: #2c3e50; }
         pre { background: #f4f4f4; padding: 1rem; border-radius: 5px; overflow-x: auto; }
         code { font-family: monospace; }
-        .section { margin-bottom: 2rem; }
+        .section { margin-bottom: 2.5rem; }
     </style>
 </head>
 <body>
-    <h1>AIS Relay Server Usage Guide</h1>
 
-    <div class="section">
-        <h2>1. TCP Relay (Port 5000)</h2>
-        <p>The TCP relay provides raw AIS NMEA data. Only one connection to the AIS source is made; multiple clients can connect to this relay.</p>
+<h1>AIS Relay Server Usage Guide</h1>
 
-        <h3>Python TCP Client Example:</h3>
-        <pre><code>import asyncio
+<p>
+This document describes how to consume AIS data from the AIS Relay Server.
+The relay provides authenticated access to raw AIS NMEA messages and database snapshots.
+All external AIS feeds are secured using TLS and exposed locally via a TCP relay.
+</p>
+
+<div class="section">
+    <h2>1. Secure AIS Feed via Stunnel (Client Setup)</h2>
+
+    <p>
+    The upstream AIS data source requires a TLS-encrypted connection.
+    To simplify client access, <strong>stunnel</strong> is used to terminate TLS locally
+    and expose the AIS stream as a plain TCP socket.
+    </p>
+
+    <p>
+    Once stunnel is running, AIS data will be available locally on:
+    </p>
+
+    <pre><code>127.0.0.1:5000</code></pre>
+
+    <h3>Example stunnel Client Configuration</h3>
+
+    <pre><code>client = yes
+foreground = yes
+debug = info
+
+[secure-service-client]
+accept = 127.0.0.1:5000
+connect = ais-data-relay.streams.sunet.se:5000
+checkHost = ais-data-relay.streams.sunet.se
+cert = ./client.crt
+key = ./client.key
+CAfile = ./ca.crt
+verifyChain = yes
+verifyPeer = no</code></pre>
+
+    <p>
+    Required files in the stunnel directory:
+    </p>
+    <ul>
+        <li><code>client.crt</code> – client certificate</li>
+        <li><code>client.key</code> – private key (must be kept secure)</li>
+        <li><code>ca.crt</code> – trusted CA certificate</li>
+    </ul>
+
+    <p>
+    Start the stunnel client using:
+    </p>
+
+    <pre><code>sudo stunnel client-stunnel.conf</code></pre>
+
+    <p>
+    All applications should connect only to the local TCP port.
+    They do not need to handle TLS directly.
+    </p>
+</div>
+
+<div class="section">
+    <h2>2. TCP Relay (Port 5000)</h2>
+
+    <p>
+    The TCP relay provides raw AIS NMEA sentences over a plain TCP connection.
+    The relay maintains a single connection to the upstream AIS source while
+    allowing multiple authenticated clients to connect simultaneously.
+    </p>
+
+    <h3>Python Async TCP Client Example</h3>
+
+    <pre><code>import asyncio
 
 async def tcp_client(USERNAME="admin", PASSWORD="1234"):
     reader, writer = await asyncio.open_connection("localhost", 5000)
+
     prompt = await reader.readline()
     print(prompt.decode().strip())
-    writer.write((USERNAME + "\\n").encode())
+    writer.write((USERNAME + "\n").encode())
     await writer.drain()
+
     prompt = await reader.readline()
     print(prompt.decode().strip())
-    writer.write((PASSWORD + "\\n").encode())
+    writer.write((PASSWORD + "\n").encode())
     await writer.drain()
+
     result = await reader.readline()
     print(result.decode().strip())
+
     try:
         while True:
             line = await reader.readline()
@@ -41,53 +110,42 @@ async def tcp_client(USERNAME="admin", PASSWORD="1234"):
             print(line.decode().strip())
     except KeyboardInterrupt:
         writer.close()
-        await writer.wait_closed()</code></pre>
+        await writer.wait_closed()
 
-        <h3>curl Example (HTTP GET for DB snapshot):</h3>
-        <pre><code>curl -u admin:1234 http://localhost:8000/db/snapshot -o ais_snapshot.db</code></pre>
-    </div>
+asyncio.run(tcp_client())</code></pre>
+</div>
 
-    <div class="section">
-        <h2>2. WebSocket Relay (Port 8000)</h2>
-        <p>The WebSocket endpoint <code>/ws/ais</code> provides normalized JSON AIS messages. Optional geographic filters can be sent on connection.</p>
+<div class="section">
+    <h2>3. Database Snapshot (HTTP)</h2>
 
-        <h3>Python WebSocket Client Example:</h3>
-        <pre><code>import asyncio
-import websockets
-import json
-import base64
+    <p>
+    The relay maintains a local SQLite database containing the latest AIS state.
+    A snapshot of this database can be downloaded via an authenticated HTTP endpoint.
+    </p>
 
-async def ws_client(USERNAME="admin", PASSWORD="1234"):
-    auth = base64.b64encode(f"{USERNAME}:{PASSWORD}".encode()).decode()
-    headers = [("Authorization", f"Basic {auth}")]
-    async with websockets.connect("ws://localhost:8000/ws/ais", extra_headers=headers) as ws:
-        await ws.send(json.dumps({
-            "type": "filter",
-            "bbox": {"min_lat": 56,"max_lat": 58,"min_lon": 18,"max_lon": 21}
-        }))
-        async for msg in ws:
-            print(json.loads(msg))</code></pre>
-    </div>
+    <h3>Python Requests Example</h3>
 
-    <div class="section">
-        <h2>3. Database Snapshot</h2>
-        <p>The SQLite database is available for download using the snapshot endpoint. Always authenticate before downloading.</p>
-
-        <h3>Python requests Example:</h3>
-        <pre><code>import requests
+    <pre><code>import requests
 from requests.auth import HTTPBasicAuth
 
 url = "http://localhost:8000/db/snapshot"
 response = requests.get(url, auth=HTTPBasicAuth("admin", "1234"))
+
 with open("ais_snapshot.db", "wb") as f:
     f.write(response.content)</code></pre>
-    </div>
+</div>
 
-    <div class="section">
-        <h2>4. Quick curl Example</h2>
-        <pre><code>curl -u admin:1234 http://localhost:8000/db/snapshot -o ais_snapshot.db</code></pre>
-    </div>
+<div class="section">
+    <h2>4. Quick curl Example</h2>
 
-    <p>For WebSocket clients, remember to use Basic Auth in the headers. For TCP clients, follow the username/password prompts.</p>
+    <pre><code>curl -u admin:1234 http://localhost:8000/db/snapshot -o ais_snapshot.db</code></pre>
+</div>
+
+<p>
+<strong>Authentication Notes:</strong><br>
+• TCP clients authenticate using a username/password prompt.<br>
+• HTTP and WebSocket clients must use HTTP Basic Authentication headers.
+</p>
+
 </body>
 </html>
