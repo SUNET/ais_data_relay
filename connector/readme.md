@@ -95,6 +95,12 @@ ENVIRONMENT=production|development
 
 ## 4. Systemd Service Configuration
 
+To run it directly:
+
+```bash
+python ais_converter.py --interval 60 --output ais_live_data.csv --no-asn
+```
+
 ### 4.1 Create Systemd Unit File
 
 Create:

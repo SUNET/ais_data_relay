@@ -99,8 +99,9 @@ class AISRelayServer:
         self.SNAPSHOT_DB = config.database_url / "ais_snapshot.db"
         self.database = DatabaseManager(self.LIVE_DB)
         self.database.init_db() 
-        self.db_queue: asyncio.Queue = asyncio.Queue(maxsize=50000)
-        self.db_task: asyncio.Task | None = None
+        self.db_queue: asyncio.Queue = asyncio.Queue(maxsize=200_000)
+        self.db_tasks: list[asyncio.Task] = []
+        self.number_of_db_workers = 4  # Number of concurrent DB worker tasks
 
         
     # ---------------- AIS AUTH --------------- #
@@ -211,6 +212,15 @@ class AISRelayServer:
         
         return lon, lat
     
+    def delete_log_file(self):
+        log_file_path = Path(os.environ.get("LOGGER_FILE", "ais_processor.log"))
+        if log_file_path.exists():
+            log_file_path.unlink(missing_ok=True)
+            logger.info("Log file deleted")
+        else:
+            logger.info("Log file does not exist, nothing to delete")
+            
+    
     def _reset_db_if_too_old(self):
         db_path = Path(self.config.database_url)
 
@@ -231,12 +241,17 @@ class AISRelayServer:
 
             # Delete DB file
             db_path.unlink(missing_ok=True)
+            
+            # Delete log file as well
+            self.delete_log_file()
 
             # Recreate DB
             self.database.init_db()
 
             logger.info("SQLite DB reset completed")
-
+            
+        # Always update last check timestamp
+        self._last_db_check = now
     
     def process_ais_message(self, decoded_normalized):
         def _extract_vessel_data(decoded: Dict) -> Dict:
@@ -488,8 +503,13 @@ class AISRelayServer:
     async def start(self, tcp_port: int = 5000):
         self.running = True
         self.ais_task = asyncio.create_task(self.connect_to_ais())
-        self.db_task = asyncio.create_task(self.db_worker())
-        
+        self.db_tasks = asyncio.create_task(self.db_worker())
+        # Start multiple DB workers
+        self.db_tasks = [
+            asyncio.create_task(self.db_worker())
+            for _ in range(self.number_of_db_workers)
+        ]
+    
         # Start TCP server in background
         asyncio.create_task(self.start_tcp_server(port=tcp_port))
         
@@ -500,13 +520,17 @@ class AISRelayServer:
             self.ais_writer.close()
             await self.ais_writer.wait_closed()
 
-        for task in (self.ais_task, self.db_task):
+        for task in (self.ais_task, *self.db_tasks):
             if task:
                 task.cancel()
                 try:
                     await task
                 except asyncio.CancelledError:
                     pass
+        
+        self.ais_task = None
+        self.db_tasks = []
+        logger.info("AIS Relay server stopped")
 
 
 # ---------------- FASTAPI ---------------- #
