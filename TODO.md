@@ -11,3 +11,14 @@
 - [x] Update the web doc & the readme doc
 - [ ] install the new version on asn servers
 
+openssl s_client -connect ais-data-relay.streams.sunet.se:5000 \
+  -cert /opt/stunnel/client.crt \
+  -key /opt/stunnel/client.key \
+  -CAfile /opt/stunnel/ca.crt
+
+
+openssl s_client -connect ais-data-relay.streams.sunet.se:5000 \
+  -cert ./client.crt \
+  -key ./client.key \
+  -CAfile ./ca.crt
+  

@@ -5,7 +5,8 @@ set -e
 SERVICE_USER="operator"
 SERVICE_GROUP=$(id -gn "${SERVICE_USER}")  # automatically gets 'users'
 PROJECT_DIR="/opt/ais_converter_env"
-REPO_URL="https://platform.sunet.se/benedith/ais_converter.git"
+REPO_URL="https://github.com/SUNET/ais_data_relay.git"
+REPO_NAME="ais_data_relay"
 INTERVAL=60
 SERVICE_NAME="ais_converter"
 ENV_FILE="/etc/default/${SERVICE_NAME}"
@@ -29,16 +30,16 @@ source "${PROJECT_DIR}/bin/activate"
 
 echo "[+] Cloning project repository..."
 cd "${PROJECT_DIR}"
-if [ ! -d "${PROJECT_DIR}/ais_converter" ]; then
+if [ ! -d "${PROJECT_DIR}/${REPO_NAME}" ]; then
     git clone "${REPO_URL}"
 else
     echo "[+] Repository already exists, skipping clone."
 fi
 
 if "${PROJECT_DIR}/bin/python3" -c 'import sys; sys.exit(0) if sys.version_info >= (3,7) else sys.exit(1)'; then
-    REQ_FILE="${PROJECT_DIR}/ais_converter/requirements_py3.7.above.txt"
+    REQ_FILE="${PROJECT_DIR}/${REPO_NAME}/connector/requirements_py3.7.above.txt"
 else
-    REQ_FILE="${PROJECT_DIR}/ais_converter/requirements.txt"
+    REQ_FILE="${PROJECT_DIR}/${REPO_NAME}/connector/requirements.txt"
 fi
 
 echo "[+] Installing dependencies from $REQ_FILE ..."
@@ -46,8 +47,8 @@ echo "[+] Installing dependencies from $REQ_FILE ..."
 
 # === 2. Environment File ===
 # Prompt for sensitive values
-read -rp "Enter AIS_USER_PASSWORD: " AIS_USER_PASSWORD
-read -rp "Enter AIS_SERVER_HOST: " AIS_SERVER_HOST
+read -rp "Enter AIS_SERVER_HOST (127.0.0.1): " AIS_SERVER_HOST
+read -rp "Enter AIS_SERVER_PORT (5000): " AIS_SERVER_PORT
 read -rp "Enable ASN mode? (true/false): " IS_ASN
 
 # Normalize IS_ASN
@@ -62,11 +63,10 @@ echo "[+] Writing environment configuration to ${ENV_FILE}..."
 cat > "${ENV_FILE}" <<EOF
 AIS_OUTPUT_DIR=/var/lib/ais_converter
 INTERVAL=60
-AIS_USER=Sunet
-AIS_USER_PASSWORD=${AIS_USER_PASSWORD}
 AIS_SERVER_HOST=${AIS_SERVER_HOST}
+AIS_SERVER_PORT=${AIS_SERVER_PORT}
 IS_ASN=${IS_ASN}
-AIS_SERVER_PORT=8040
+ENVIRONMENT=production
 EOF
 
 # Restrict permissions
@@ -89,9 +89,9 @@ After=network.target
 User=${SERVICE_USER}
 Group=users
 Type=simple
-WorkingDirectory=${PROJECT_DIR}/ais_converter
+WorkingDirectory=${PROJECT_DIR}/${REPO_NAME}/connector
 EnvironmentFile=${ENV_FILE}
-ExecStart=${PROJECT_DIR}/bin/python3 ${PROJECT_DIR}/ais_converter/ais_converter.py --interval ${INTERVAL} --output ${AIS_OUTPUT_DIR}/ais_live_data.csv ${ASN_FLAG}
+ExecStart=${PROJECT_DIR}/bin/python3 ${PROJECT_DIR}/${REPO_NAME}/connector/ais_converter.py --interval ${INTERVAL} --output ${AIS_OUTPUT_DIR}/ais_live_data.csv ${ASN_FLAG}
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -132,7 +132,7 @@ echo "[+] Creating update script at ${UPDATE_SCRIPT}..."
 cat > "${UPDATE_SCRIPT}" <<EOF
 #!/bin/bash
 set -e
-cd ${PROJECT_DIR}/ais_converter
+cd ${PROJECT_DIR}/${REPO_NAME}
 git pull
 ${PROJECT_DIR}/bin/python3 -m pip install -r requirements.txt
 systemctl restart ${SERVICE_NAME}.service

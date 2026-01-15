@@ -62,6 +62,30 @@ chmod +x ais_data_relay/connector/setup_stunnel_ais_client.sh
 ./ais_data_relay/connector/setup_stunnel_ais_client.sh
 ```
 
+perfomr test:
+
+```bash
+openssl s_client -connect ais-data-relay.streams.sunet.se:5000 \
+  -cert /opt/stunnel/client.crt \
+  -key /opt/stunnel/client.key \
+  -CAfile /opt/stunnel/ca.crt
+```
+
+```bash
+nc locahost 5000
+```
+
+you should see:
+
+```bash
+!ABVDM,1,1,3,B,339K?R301fPls9hP71Hi9@wD210P,0*16
+$ABVSI,Helsingborg,3,093142,1590,-105,4*1B
+!ABVDM,1,1,9,B,15?dMl000q0r8j`Oi>3WHUmD059t,0*58
+$ABVSI,Trelleborg,9,093142,1592,-81,24*68
+!ABVDM,1,1,5,A,B3uNdF0000DjQD`O`@803wk5kP06,0*6B
+...
+```
+
 Make sure to add certificates.
 
 ### Option B: Manual Setup (Advanced / Personal Machines)
@@ -125,7 +149,11 @@ Stunnel will now expose the secure AIS stream locally on:
 127.0.0.1:5000
 ```
 
-## 3. Environment Variables
+## 3 Ais connector client
+
+On a server setup, you simply use, `install_ais_converter.sh` to install a client ais service or follow the follwoing manul seetup steps.
+
+### 3.1 Environment Variables
 
 Create an environment configuration file:
 
@@ -140,7 +168,7 @@ AIS_SERVER_PORT=5000
 ENVIRONMENT=production|development
 ```
 
-## 4. Systemd Service Configuration
+### 3.1 Systemd Service Configuration
 
 To run it directly:
 
@@ -148,7 +176,7 @@ To run it directly:
 python ais_converter.py --interval 60 --output ais_live_data.csv --no-asn
 ```
 
-### 4.1 Create Systemd Unit File
+#### 3.1.1 Create Systemd Unit File
 
 Create:
 
@@ -174,7 +202,7 @@ SyslogIdentifier=${SERVICE_NAME}
 WantedBy=multi-user.target
 ```
 
-### 4.2 Enable and Start Service
+#### 3.1.2 Enable and Start Service
 
 ```bash
 sudo systemctl daemon-reload
@@ -194,11 +222,11 @@ View logs:
 journalctl -u ais_converter.service -f
 ```
 
-## 5. Log Rotation (Optional but Recommended)
+### 3.2 Log Rotation (Optional but Recommended)
 
 If you prefer file-based logs instead of journald.
 
-### 5.1 Logrotate Configuration
+#### 3.2.1 Logrotate Configuration
 
 Create:
 
@@ -215,7 +243,7 @@ Create:
 }
 ```
 
-### 5.2 Update Systemd Service for File Logging
+#### 3.2.2 Update Systemd Service for File Logging
 
 Modify the service file:
 
@@ -231,11 +259,11 @@ sudo systemctl daemon-reload
 sudo systemctl restart ais_converter.service
 ```
 
-## 6. Update / Deployment Script
+### 3.3 Update / Deployment Script
 
 A simple script to pull updates, reinstall dependencies, and restart the service.
 
-### 6.1 Create Update Script
+#### 3.3.1 Create Update Script
 
 **`/usr/local/bin/update_ais_converter.sh`**
 
@@ -258,7 +286,7 @@ Make executable:
 sudo chmod +x /usr/local/bin/update_ais_converter.sh
 ```
 
-### 6.2 Usage
+#### 3.3.2 Usage
 
 ```bash
 sudo /usr/local/bin/update_ais_converter.sh
