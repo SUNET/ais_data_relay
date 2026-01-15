@@ -9,16 +9,6 @@
 - [x] Finish the project by tomorrow
 - [x] Copy stunnel docs to Desktop/Notes
 - [x] Update the web doc & the readme doc
-- [ ] install the new version on asn servers
-
-openssl s_client -connect ais-data-relay.streams.sunet.se:5000 \
-  -cert /opt/stunnel/client.crt \
-  -key /opt/stunnel/client.key \
-  -CAfile /opt/stunnel/ca.crt
-
-
-openssl s_client -connect ais-data-relay.streams.sunet.se:5000 \
-  -cert ./client.crt \
-  -key ./client.key \
-  -CAfile ./ca.crt
-  
+- [x] install the new version on asn servers
+- [ ] Create a puppet client class for ais-client in das-ops
+- [ ] Move ais-relay from net-ops till das-ops
