@@ -65,7 +65,7 @@ chmod +x ais_data_relay/connector/setup_stunnel_ais_client.sh
 perfomr test:
 
 ```bash
-openssl s_client -connect ais-data-relay.streams.sunet.se:5000 \
+openssl s_client -connect ais-data-relay.das.sunet.se:5000 \
   -cert /opt/stunnel/client.crt \
   -key /opt/stunnel/client.key \
   -CAfile /opt/stunnel/ca.crt
@@ -114,8 +114,8 @@ debug = info
 
 [secure-service-client]
 accept = 127.0.0.1:5000
-connect = ais-data-relay.streams.sunet.se:5000
-checkHost = ais-data-relay.streams.sunet.se
+connect = ais-data-relay.das.sunet.se:5000
+checkHost = ais-data-relay.das.sunet.se
 cert = ./client.crt
 key = ./client.key
 CAfile = ./ca.crt

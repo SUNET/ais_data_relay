@@ -27,7 +27,7 @@ docker compose \
 Upstream AIS relay server:
 
 ```text
-Hostname: shared-dco-prod-aisdatarelay-1.streams.sunet.se
+Hostname: shared-dco-prod-aisdatarelay-1.das.sunet.se
 ```
 
 The upstream connection is TLS-encrypted and accessed via **stunnel**.
@@ -102,8 +102,8 @@ debug = info
 
 [secure-ais-client]
 accept = 127.0.0.1:5000
-connect = shared-dco-prod-aisdatarelay-1.streams.sunet.se:5000
-checkHost = shared-dco-prod-aisdatarelay-1.streams.sunet.se
+connect = shared-dco-prod-aisdatarelay-1.das.sunet.se:5000
+checkHost = shared-dco-prod-aisdatarelay-1.das.sunet.se
 cert = ./client.crt
 key = ./client.key
 CAfile = ./ca.crt
@@ -217,7 +217,7 @@ openssl genrsa -out server.key 4096
 openssl req -new \
   -key server.key \
   -out server.csr \
-  -subj "/C=US/ST=State/L=City/O=Org/OU=IT/CN=ais-data-relay.streams.sunet.se"
+  -subj "/C=US/ST=State/L=City/O=Org/OU=IT/CN=ais-data-relay.das.sunet.se"
 
 # Sign server certificate using the CA
 openssl x509 -req \
