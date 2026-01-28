@@ -71,6 +71,12 @@ pip install \
 Start the FastAPI server:
 
 ```bash
+dotenvx run -- python app/main.py
+```
+
+or
+
+```bash
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 

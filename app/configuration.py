@@ -1,4 +1,5 @@
 import os
+import secrets
 import logging
 from pathlib import Path
 from typing import Tuple
@@ -49,6 +50,43 @@ def env_bool(name: str, default: bool = False) -> bool:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
+
+@dataclass
+class AuthConfig:
+    """Authentication configuration"""
+    web_username: str
+    web_password: str
+    tcp_username: str
+    tcp_password: str
+    enable_tcp_auth: bool = False
+    enable_web_auth: bool = True
+    
+    def verify_web_credentials(self, username: str, password: str) -> bool:
+        """Verify web interface credentials using constant-time comparison"""
+        username_match = secrets.compare_digest(username, self.web_username)
+        password_match = secrets.compare_digest(password, self.web_password)
+        return username_match and password_match
+    
+    def verify_tcp_credentials(self, username: str, password: str) -> bool:
+        """Verify TCP client credentials using constant-time comparison"""
+        username_match = secrets.compare_digest(username, self.tcp_username)
+        password_match = secrets.compare_digest(password, self.tcp_password)
+        return username_match and password_match
+    
+@dataclass
+class GeographicBounds:
+    min_lat: float
+    max_lat: float
+    min_lon: float
+    max_lon: float
+
+    def contains(self, lat: float, lon: float) -> bool:
+        return (
+            self.min_lat <= lat <= self.max_lat
+            and self.min_lon <= lon <= self.max_lon
+        )
+
+
 @dataclass
 class AppConfig:
     """Configuration class for AIS data processor"""
@@ -75,6 +113,8 @@ class AppConfig:
     database_url: str = field(
         default_factory=lambda: Path(os.environ.get("DATABASE_URL", "database"))
     )
+    
+    environment: str = field(default_factory=lambda: os.environ.get("ENVIRONMENT", "production"))
 
 
     # ---------------- AUTH (WEB / TCP) ----------------

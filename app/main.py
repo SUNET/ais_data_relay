@@ -1,59 +1,23 @@
 import os
-import json
-import time
+import uuid
 import base64
 import shutil
 import hashlib
 import asyncio
 import uvicorn
-import secrets
 from enum import Enum
 from pathlib import Path
+from datetime import datetime
 from pyais import IterMessages
-from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from configuration import AppConfig, logger
 from typing import Set, Dict, Optional, Tuple
 from database_unrestricted import DatabaseManager
+from configuration import AppConfig, AuthConfig, logger
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException, Request, status, Depends
 
-@dataclass
-class GeographicBounds:
-    min_lat: float
-    max_lat: float
-    min_lon: float
-    max_lon: float
-
-    def contains(self, lat: float, lon: float) -> bool:
-        return (
-            self.min_lat <= lat <= self.max_lat
-            and self.min_lon <= lon <= self.max_lon
-        )
-
-
-@dataclass
-class AuthConfig:
-    """Authentication configuration"""
-    web_username: str
-    web_password: str
-    tcp_username: str
-    tcp_password: str
-    enable_tcp_auth: bool = False
-    enable_web_auth: bool = True
-    
-    def verify_web_credentials(self, username: str, password: str) -> bool:
-        """Verify web interface credentials using constant-time comparison"""
-        username_match = secrets.compare_digest(username, self.web_username)
-        password_match = secrets.compare_digest(password, self.web_password)
-        return username_match and password_match
-    
-    def verify_tcp_credentials(self, username: str, password: str) -> bool:
-        """Verify TCP client credentials using constant-time comparison"""
-        username_match = secrets.compare_digest(username, self.tcp_username)
-        password_match = secrets.compare_digest(password, self.tcp_password)
-        return username_match and password_match
 
 async def read_line_limited(reader, max_bytes, timeout):
     buf = bytearray()
@@ -67,12 +31,17 @@ async def read_line_limited(reader, max_bytes, timeout):
         if len(buf) > max_bytes:
             raise ValueError("Line too long")
 
-        if chunk == b'\n':
+        if chunk == b"\n":
             return bytes(buf)
 
 
 class AISRelayServer:
-    def __init__(self, config: AppConfig, use_hashed=False, auth_config: Optional[AuthConfig] = None):
+    def __init__(
+        self,
+        config: AppConfig,
+        use_hashed=False,
+        auth_config: Optional[AuthConfig] = None,
+    ):
         self.MAX_LINE = 256
         self.config = config
         self.ais_host = config.ais_host
@@ -89,21 +58,36 @@ class AISRelayServer:
         self.ais_reader: Optional[asyncio.StreamReader] = None
         self.ais_writer: Optional[asyncio.StreamWriter] = None
         self.running = False
-        self.ais_task = None    
-    
+        self.ais_task = None
+
         # Initialize database
         self._last_db_check = 0
-        self.DB_AGE_CHECK_INTERVAL_SECONDS = 60 * 60 
+        self.DB_AGE_CHECK_INTERVAL_SECONDS = 60 * 60
         self.DB_RESET_SECONDS = 24 * 60 * 60
-        self.LIVE_DB = config.database_url / "ais_database.db"
-        self.SNAPSHOT_DB = config.database_url / "ais_snapshot.db"
+        # Generate date-based database filename with UUID suffix
+        self.LIVE_DB = self.config.database_url / self.get_new_db_name()
+        self.SNAPSHOT_DB = self.config.database_url / "ais_snapshot.db"
         self.database = DatabaseManager(self.LIVE_DB)
-        self.database.init_db() 
+        self.database.init_db()
+
         self.db_queue: asyncio.Queue = asyncio.Queue(maxsize=200_000)
         self.db_tasks: list[asyncio.Task] = []
         self.number_of_db_workers = 4  # Number of concurrent DB worker tasks
 
-        
+        # Scheduler for periodic tasks
+        self.scheduler = AsyncIOScheduler()
+
+    def get_new_db_name(self):
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        uuid_suffix = str(uuid.uuid4())[:8]  # Use first 8 characters of UUID
+        return f"{date_str}_{uuid_suffix}_ais_db.db"
+
+    def reset_db(self):
+        self.LIVE_DB = self.config.database_url / self.get_new_db_name()
+        self.database = DatabaseManager(self.LIVE_DB)
+        self.database.init_db()
+        return self.database
+
     # ---------------- AIS AUTH --------------- #
     def create_logon_msg(self) -> bytearray:
         """Create login message for AIS server"""
@@ -119,10 +103,10 @@ class AISRelayServer:
         """Create hashed login message for AIS server"""
         # Step 1: MD5 hash of the password
         md5_hash = hashlib.md5(self.ais_password.encode("utf-8")).digest()
-        
+
         # Step 2: Base64-encode the hash
         password_encoded = base64.b64encode(md5_hash).decode("ascii")
-        
+
         # Step 3: Build binary message
         message = bytearray()
         message.append(2)  # Command ID = 2
@@ -140,14 +124,15 @@ class AISRelayServer:
             for line in lines
             if line.strip() and not line.strip().startswith(b"$ABVSI")
         ]
-        
+
     @staticmethod
     def is_enum_instance(value):
         """Check if a value is an Enum instance"""
         return isinstance(value, Enum)
-    
+
     def normalize_ais_message(self, entry):
         """Normalize AIS message format"""
+
         def decode_bytes(value, key):
             if isinstance(value, bytes):
                 try:
@@ -180,38 +165,45 @@ class AISRelayServer:
                 entry[bin_key] = decode_bytes(entry[bin_key], bin_key)
 
         return entry
-    
+
     def is_valid_geo_point(self, lon, lat):
         # type: (float, float) -> bool
         if lon and lat:
             return -180 <= lon <= 180 and -90 <= lat <= 90
         else:
             return True
-    
-    def _extract_coordinates(self, decoded: Dict) -> Tuple[Optional[float], Optional[float]]:
+
+    def _extract_coordinates(
+        self, decoded: Dict
+    ) -> Tuple[Optional[float], Optional[float]]:
         """
         Extract and validate coordinates from decoded message
-        
+
         Args:
             decoded: Normalized AIS message dictionary
-            
+
         Returns:
             Tuple of (longitude, latitude)
-            
+
         Raises:
             InvalidCoordinatesError: If coordinates are present but invalid
         """
         location = decoded.get("location", {})
         coords = location.get("coordinates", [None, None])
-        lon, lat = coords[0] if len(coords) > 0 else None, coords[1] if len(coords) > 1 else None
-        
+        lon, lat = (
+            coords[0] if len(coords) > 0 else None,
+            coords[1] if len(coords) > 1 else None,
+        )
+
         if lon is not None and lat is not None:
             if not self.is_valid_geo_point(lon, lat):
-                logger.error(f"Invalid geo-coordinates: lng: {lon}, lat: {lat}. MMSI: {decoded.get('mmsi')}")
+                logger.error(
+                    f"Invalid geo-coordinates: lng: {lon}, lat: {lat}. MMSI: {decoded.get('mmsi')}"
+                )
                 raise Exception("Invalid coordinates [{}, {}]".format(lon, lat))
-        
+
         return lon, lat
-    
+
     def delete_log_file(self):
         log_file_path = Path(os.environ.get("LOGGER_FILE", "ais_processor.log"))
         if log_file_path.exists():
@@ -219,48 +211,28 @@ class AISRelayServer:
             logger.info("Log file deleted")
         else:
             logger.info("Log file does not exist, nothing to delete")
-            
-    
-    def _reset_db_if_too_old(self):
-        db_path = Path(self.config.database_url)
 
-        if not db_path.exists():
-            return
-
-        now = time.time()
-        if now - self._last_db_check < self.DB_AGE_CHECK_INTERVAL_SECONDS:
-            return
-        
-        age = now - db_path.stat().st_mtime
-
-        if age > self.DB_RESET_SECONDS:
-            logger.warning("SQLite DB older than 1 day — resetting")
-
-            # Close connections safely
-            self.database.close()
-
-            # Delete DB file
-            db_path.unlink(missing_ok=True)
-            
+    async def reset_db_on_new_day(self):
+        """Delete files older than current day at 23:59"""
+        logger.warning("SQLite DB older than 1 day — resetting")
+        logger.warning("One day have passed — resetting the database")
+        try:
+            self.database = self.reset_db()
+            if self.database:
+                logger.info("SQLite DB reset completed")
             # Delete log file as well
             self.delete_log_file()
+        except Exception as e:
+            logger.error(f"Cleanup error: {e}")
 
-            # Recreate DB
-            self.database.init_db()
-
-            logger.info("SQLite DB reset completed")
-            
-        # Always update last check timestamp
-        self._last_db_check = now
-    
     def process_ais_message(self, decoded_normalized):
         def _extract_vessel_data(decoded: Dict) -> Dict:
             """
             Extract vessel static data from normalized AIS message
-            
+
             Args:
                 decoded: Normalized AIS message dictionary
-                
+
             Returns:
                 Dictionary with vessel static data
             """
@@ -271,15 +243,17 @@ class AISRelayServer:
                 "ship_type": decoded.get("ship_type"),
             }
 
-        def _extract_vessel_state(decoded: Dict, lon: Optional[float], lat: Optional[float]) -> Dict:
+        def _extract_vessel_state(
+            decoded: Dict, lon: Optional[float], lat: Optional[float]
+        ) -> Dict:
             """
             Extract vessel dynamic state from normalized AIS message
-            
+
             Args:
                 decoded: Normalized AIS message dictionary
                 lon: Longitude (can be None)
                 lat: Latitude (can be None)
-                
+
             Returns:
                 Dictionary with vessel dynamic state
             """
@@ -294,9 +268,7 @@ class AISRelayServer:
                 "call_sign": decoded.get("callsign"),
                 "destination": decoded.get("destination"),
             }
-        
-        # Reset DB if needed
-        self._reset_db_if_too_old()
+
         # Extract and validate coordinates
         lon, lat = self._extract_coordinates(decoded_normalized)
 
@@ -306,7 +278,7 @@ class AISRelayServer:
         vessel_state["vessel_mmsi"] = vessel["mmsi"]
         self.database.create_vessel(**vessel)
         self.database.create_vessel_state(**vessel_state)
-            
+
     # ---------------- AIS CONNECTION ---------------- #
 
     async def connect_to_ais(self):
@@ -318,16 +290,18 @@ class AISRelayServer:
                 )
 
                 logger.info("Connected to AIS server successfully")
-                
+
                 # Send login message if credentials are provided
                 if self.ais_user and self.ais_password:
                     if self.use_hashed:
                         login_message = self.create_logon_msg_hashed()
-                        logger.info(f"Sending hashed login message for user: {self.ais_user}")
+                        logger.info(
+                            f"Sending hashed login message for user: {self.ais_user}"
+                        )
                     else:
                         login_message = self.create_logon_msg()
                         logger.info(f"Sending login message for user: {self.ais_user}")
-                    
+
                     # Send the login message
                     self.ais_writer.write(bytes(login_message))
                     await self.ais_writer.drain()
@@ -336,18 +310,21 @@ class AISRelayServer:
                     # Optional: Wait for authentication response
                     try:
                         response = await asyncio.wait_for(
-                            self.ais_reader.readline(), 
-                            timeout=10.0
+                            self.ais_reader.readline(), timeout=10.0
                         )
-                        logger.info(f"Authentication response: {response.decode('utf-8', errors='ignore').strip()}")
+                        logger.info(
+                            f"Authentication response: {response.decode('utf-8', errors='ignore').strip()}"
+                        )
                     except asyncio.TimeoutError:
                         logger.warning("No authentication response received (timeout)")
                 else:
-                    logger.info("No credentials provided, connecting without authentication")
-                
+                    logger.info(
+                        "No credentials provided, connecting without authentication"
+                    )
+
                 # Start reading data
                 await self.read_ais_data()
-                
+
             except Exception as e:
                 logger.error(f"AIS connection error: {e}")
                 if self.ais_writer:
@@ -375,9 +352,10 @@ class AISRelayServer:
                     try:
                         decoded_sentence = msg.decode()
                         decoded_ais_line = decoded_sentence.asdict()
-                        decoded_normalized = self.normalize_ais_message(decoded_ais_line)
-                        print("decoded_normalized={}".format(decoded_normalized))
-                            
+                        decoded_normalized = self.normalize_ais_message(
+                            decoded_ais_line
+                        )
+
                         # enqueue for DB (DO NOT await DB here)
                         try:
                             self.db_queue.put_nowait(decoded_normalized)
@@ -391,7 +369,6 @@ class AISRelayServer:
             except Exception as e:
                 logger.error(f"Error iterating AIS messages: {e}")
                 continue
-
 
     # ---------------- BROADCAST ---------------- #
     async def broadcast_tcp(self, message: str):
@@ -410,30 +387,31 @@ class AISRelayServer:
             writer.close()
             logger.info("Removed dead TCP client")
 
-
-    async def is_authenticated_tcp_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> bool:
+    async def is_authenticated_tcp_client(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> bool:
         addr = writer.get_extra_info("peername")
         if not self.auth_config.enable_tcp_auth:
             return True  # No authentication required
-        
+
         # Require authentication if configured
         if self.auth_config.enable_tcp_auth:
             writer.write(b"AUTH REQUIRED\r\nUsername: ")
             await writer.drain()
-            
+
             # Read username (with timeout)
             try:
                 # username_data = await asyncio.wait_for(reader.readline(), timeout=30.0)
                 username_data = await read_line_limited(reader, 64, 30.0)
-                username = username_data.decode('utf-8', errors='ignore').strip()
-                
+                username = username_data.decode("utf-8", errors="ignore").strip()
+
                 writer.write(b"Password: ")
                 await writer.drain()
-                
+
                 # password_data = await asyncio.wait_for(reader.readline(), timeout=30.0)
                 password_data = await read_line_limited(reader, 256, 30.0)
-                password = password_data.decode('utf-8', errors='ignore').strip()
-                
+                password = password_data.decode("utf-8", errors="ignore").strip()
+
                 # Verify credentials
                 if self.auth_config.verify_tcp_credentials(username, password):
                     writer.write(b"AUTH SUCCESS\r\n")
@@ -445,7 +423,7 @@ class AISRelayServer:
                     await writer.drain()
                     logger.warning(f"TCP authentication failed for {addr}")
                     return False
-                    
+
             except asyncio.TimeoutError:
                 writer.write(b"AUTH TIMEOUT\r\n")
                 await writer.drain()
@@ -453,10 +431,12 @@ class AISRelayServer:
                 return False
 
     # ---------------- LIFECYCLE ---------------- #
-    async def handle_tcp_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    async def handle_tcp_client(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ):
         addr = writer.get_extra_info("peername")
         logger.info(f"TCP client connected: {addr}")
-        
+
         if await self.is_authenticated_tcp_client(reader, writer):
             self.tcp_clients.add(writer)
             try:
@@ -465,19 +445,13 @@ class AISRelayServer:
                 self.tcp_clients.remove(writer)
                 writer.close()
                 logger.info(f"TCP client disconnected: {addr}")
-            
-            
-            
+
     async def start_tcp_server(self, host: str = "0.0.0.0", port: int = 5000):
-        self.tcp_server = await asyncio.start_server(
-            self.handle_tcp_client, host, port
-        )
+        self.tcp_server = await asyncio.start_server(self.handle_tcp_client, host, port)
         logger.info(f"TCP relay listening on {host}:{port}")
 
         async with self.tcp_server:
             await self.tcp_server.serve_forever()
-            
-
 
     async def db_worker(self):
         logger.info("DB worker started")
@@ -488,17 +462,12 @@ class AISRelayServer:
                 message = await self.db_queue.get()
 
                 # Run blocking DB work in a thread
-                await loop.run_in_executor(
-                    None,
-                    self.process_ais_message,
-                    message
-                )
+                await loop.run_in_executor(None, self.process_ais_message, message)
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"DB worker error: {e}")
-
 
     async def start(self, tcp_port: int = 5000):
         self.running = True
@@ -509,11 +478,21 @@ class AISRelayServer:
             asyncio.create_task(self.db_worker())
             for _ in range(self.number_of_db_workers)
         ]
-    
+
         # Start TCP server in background
         asyncio.create_task(self.start_tcp_server(port=tcp_port))
-        
-        
+
+        # Schedule daily cleanup at 23:59
+        # self.scheduler.add_job(self.reset_db_on_new_day, "cron", hour=23, minute=59)
+        conf_env = self.config.environment.lower()
+        if conf_env == "production":
+            self.scheduler.add_job(self.reset_db_on_new_day, "cron", hour=23, minute=59)
+            logger.info("Cleanup scheduler started (runs daily at 23:59)")
+        else:
+            self.scheduler.add_job(self.reset_db_on_new_day, "interval", minutes=2)
+            logger.info("Cleanup scheduler started (runs every 2 minutes for test environment)")
+        self.scheduler.start()
+
     async def stop(self):
         self.running = False
         if self.ais_writer:
@@ -527,13 +506,14 @@ class AISRelayServer:
                     await task
                 except asyncio.CancelledError:
                     pass
-        
+
         self.ais_task = None
         self.db_tasks = []
         logger.info("AIS Relay server stopped")
 
 
 # ---------------- FASTAPI ---------------- #
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -542,14 +522,15 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     await ais_relay.stop()
-    
-    
 
-app = FastAPI(
-    title="AIS Relay",
-    lifespan=lifespan
-)
-static_dir = Path("database")
+
+# Load configuration
+config = AppConfig()
+print("Env:", config.environment)
+
+# Create FastAPI app
+app = FastAPI(title="AIS Relay", lifespan=lifespan)
+static_dir = Path(config.database_url)
 static_dir.mkdir(exist_ok=True)
 # Path to index.html
 BASE_DIR = Path(__file__).parent
@@ -567,9 +548,9 @@ async def require_web_auth(request: Request):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             headers={"WWW-Authenticate": "Basic"},
-            detail="Authentication required"
+            detail="Authentication required",
         )
-    
+
     try:
         decoded = base64.b64decode(auth_header[6:]).decode()
         username, password = decoded.split(":", 1)
@@ -577,13 +558,13 @@ async def require_web_auth(request: Request):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 headers={"WWW-Authenticate": "Basic"},
-                detail="Invalid credentials"
+                detail="Invalid credentials",
             )
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             headers={"WWW-Authenticate": "Basic"},
-            detail="Invalid Authorization header"
+            detail="Invalid Authorization header",
         )
 
 
@@ -605,8 +586,84 @@ async def snapshot_db(_: None = Depends(require_web_auth)):
     return FileResponse(
         path=ais_relay.SNAPSHOT_DB,
         media_type="application/octet-stream",
-        filename="ais_snapshot.db"
+        filename="ais_snapshot.db",
     )
+
+
+@app.get("/db/files")
+async def list_db_files(_: None = Depends(require_web_auth)):
+    """List all database files in the configured database directory"""
+    try:
+        static_dir = Path(config.database_url)
+        if not static_dir.exists():
+            return {"files": []}
+
+        # Get all .db files in the directory
+        db_files = []
+        for file_path in static_dir.glob("*.db"):
+            # Get file stats
+            stat = file_path.stat()
+            db_files.append(
+                {
+                    "name": file_path.name,
+                    "size": stat.st_size,
+                    "created": stat.st_ctime,
+                    "modified": stat.st_mtime,
+                }
+            )
+
+        # Sort by creation time (newest first)
+        db_files.sort(key=lambda x: x["created"], reverse=True)
+
+        return {"files": db_files}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to list database files: {e}"
+        )
+
+
+@app.get("/db/download/{filename}")
+async def download_db_file(filename: str, _: None = Depends(require_web_auth)):
+    """Download a specific database file (excluding the live database)"""
+    try:
+        # Security check: ensure filename is just a filename, not a path
+        if "/" in filename or "\\" in filename or ".." in filename:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
+        # Security check: ensure it's a .db file
+        if not filename.endswith(".db"):
+            raise HTTPException(
+                status_code=400, detail="Only database files (.db) are allowed"
+            )
+
+        static_dir = Path(config.database_url)
+        file_path = static_dir / filename
+
+        # Check if file exists
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+
+        # Security check: prevent downloading the live database
+        live_db_path = Path(ais_relay.LIVE_DB)
+        if str(file_path) == str(live_db_path) or file_path.name == live_db_path.name:
+            raise HTTPException(
+                status_code=403,
+                detail="Cannot download the live database as it's currently in use",
+            )
+
+        return FileResponse(
+            path=file_path,
+            media_type="application/octet-stream",
+            filename=filename,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to download file: {e}")
+
 
 @app.get("/health")
 async def health():
@@ -614,10 +671,9 @@ async def health():
         "tcp_clients": len(ais_relay.tcp_clients),
         "ais_connected": ais_relay.ais_reader is not None,
     }
-    
+
 
 # ---------------- MAIN ---------------- #
-config = AppConfig()
 logger.info("Loaded configuration: %s", config)
 auth_config = AuthConfig(
     web_username=config.web_username,
@@ -627,7 +683,6 @@ auth_config = AuthConfig(
     enable_tcp_auth=config.enable_tcp_auth,
     enable_web_auth=config.enable_web_auth,
 )
-
 ais_relay = AISRelayServer(config, use_hashed=False, auth_config=auth_config)
 
 

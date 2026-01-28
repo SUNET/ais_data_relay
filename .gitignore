@@ -147,4 +147,8 @@ certs_temp/
 jenkins
 jenkins/
 certs_ca_safesping_server
+.env.production
+.env.*
+logs/*
+logs
 
