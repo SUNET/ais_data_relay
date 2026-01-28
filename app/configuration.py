@@ -109,7 +109,7 @@ class AppConfig:
         default_factory=lambda: _parse_tuple(os.environ.get("LIM_LON"), (17.6, 19.4))
     )
 
-    # ---------------- DATABASE ----------------
+    # ---------------- DATABAS ----------------
     database_url: str = field(
         default_factory=lambda: Path(os.environ.get("DATABASE_URL", "database"))
     )
