@@ -549,9 +549,25 @@ class AISRelayServer:
         logger.info("AIS Relay server stopped")
 
 
+# ---------------- MAIN ---------------- #
+# Load configuration
+config = AppConfig()
+print("Env:", config.environment)
+
+logger.info("Loaded configuration: %s", config)
+auth_config = AuthConfig(
+    web_username=config.web_username,
+    web_password=config.web_password,
+    tcp_username=config.tcp_username,
+    tcp_password=config.tcp_password,
+    enable_tcp_auth=config.enable_tcp_auth,
+    enable_web_auth=config.enable_web_auth,
+)
+ais_relay = AISRelayServer(config, use_hashed=False, auth_config=auth_config)
+
+
+
 # ---------------- FASTAPI ---------------- #
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -560,10 +576,6 @@ async def lifespan(app: FastAPI):
     # Shutdown
     await ais_relay.stop()
 
-
-# Load configuration
-config = AppConfig()
-print("Env:", config.environment)
 
 # Create FastAPI app
 app = FastAPI(title="AIS Relay", lifespan=lifespan)
@@ -709,18 +721,6 @@ async def health():
         "ais_connected": ais_relay.ais_reader is not None,
     }
 
-
-# ---------------- MAIN ---------------- #
-logger.info("Loaded configuration: %s", config)
-auth_config = AuthConfig(
-    web_username=config.web_username,
-    web_password=config.web_password,
-    tcp_username=config.tcp_username,
-    tcp_password=config.tcp_password,
-    enable_tcp_auth=config.enable_tcp_auth,
-    enable_web_auth=config.enable_web_auth,
-)
-ais_relay = AISRelayServer(config, use_hashed=False, auth_config=auth_config)
 
 
 async def main():
