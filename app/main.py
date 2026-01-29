@@ -7,7 +7,7 @@ import asyncio
 import uvicorn
 from enum import Enum
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from pyais import IterMessages
 from contextlib import asynccontextmanager
 from fastapi.responses import FileResponse
@@ -212,6 +212,41 @@ class AISRelayServer:
         else:
             logger.info("Log file does not exist, nothing to delete")
 
+    def delete_old_database(self, weeks: int = 1):
+        """Delete database files older than the specified number of weeks.
+        
+        Args:
+            weeks: Number of weeks to keep database files. Default is 1 week.
+        """
+        try:
+            cutoff_time = datetime.now() - timedelta(weeks=weeks)
+            db_dir = self.config.database_url
+            
+            if not db_dir.exists():
+                logger.warning(f"Database directory does not exist: {db_dir}")
+                return
+            
+            deleted_count = 0
+            for db_file in db_dir.glob("*.db"):
+                # Skip the current live database and snapshot
+                if db_file == self.LIVE_DB or db_file == self.SNAPSHOT_DB:
+                    continue
+                
+                # Check file modification time
+                file_mtime = datetime.fromtimestamp(db_file.stat().st_mtime)
+                if file_mtime < cutoff_time:
+                    db_file.unlink(missing_ok=True)
+                    deleted_count += 1
+                    logger.info(f"Deleted old database file: {db_file.name}")
+            
+            if deleted_count > 0:
+                logger.info(f"Deleted {deleted_count} old database file(s)")
+            else:
+                logger.info("No old database files to delete")
+                
+        except Exception as e:
+            logger.error(f"Error deleting old database files: {e}")
+
     async def reset_db_on_new_day(self):
         """Delete files older than current day at 23:59"""
         logger.warning("SQLite DB older than 1 day — resetting")
@@ -222,6 +257,8 @@ class AISRelayServer:
                 logger.info("SQLite DB reset completed")
             # Delete log file as well
             self.delete_log_file()
+            # Delete old database files (older than 1 week)
+            self.delete_old_database(weeks=1)
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
 
