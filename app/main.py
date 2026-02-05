@@ -77,13 +77,16 @@ class AISRelayServer:
         # Scheduler for periodic tasks
         self.scheduler = AsyncIOScheduler()
 
-    def get_new_db_name(self):
-        date_str = datetime.now().strftime("%Y-%m-%d")
+    def get_new_db_name(self, use_tomorrow=False):
+        if use_tomorrow:
+            date_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+        else:
+            date_str = datetime.now().strftime("%Y-%m-%d")
         uuid_suffix = str(uuid.uuid4())[:8]  # Use first 8 characters of UUID
         return f"{date_str}_{uuid_suffix}_ais_db.db"
 
-    def reset_db(self):
-        self.LIVE_DB = self.config.database_url / self.get_new_db_name()
+    def reset_db(self, use_tomorrow=False):
+        self.LIVE_DB = self.config.database_url / self.get_new_db_name(use_tomorrow=use_tomorrow)
         self.database = DatabaseManager(self.LIVE_DB)
         self.database.init_db()
         return self.database
@@ -212,7 +215,7 @@ class AISRelayServer:
         else:
             logger.info("Log file does not exist, nothing to delete")
 
-    def delete_old_database(self, weeks: int = 1):
+    def delete_old_database(self, weeks: int = 4):
         """Delete database files older than the specified number of weeks.
         
         Args:
@@ -252,13 +255,13 @@ class AISRelayServer:
         logger.warning("SQLite DB older than 1 day — resetting")
         logger.warning("One day have passed — resetting the database")
         try:
-            self.database = self.reset_db()
+            self.database = self.reset_db(use_tomorrow=True)
             if self.database:
                 logger.info("SQLite DB reset completed")
             # Delete log file as well
             self.delete_log_file()
-            # Delete old database files (older than 1 week)
-            self.delete_old_database(weeks=1)
+            # Delete old database files (older than 6 weeks)
+            self.delete_old_database(weeks=6)
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
 
