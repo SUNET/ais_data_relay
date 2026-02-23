@@ -51,8 +51,8 @@ debug = info
 
 [secure-service-client]
 accept = 127.0.0.1:5000
-connect = ais-data-relay.streams.sunet.se:5000
-checkHost = ais-data-relay.streams.sunet.se
+connect = ais-data-relay.das.sunet.se:5000
+checkHost = ais-data-relay.das.sunet.se
 cert = ./client.crt
 key = ./client.key
 CAfile = ./ca.crt
